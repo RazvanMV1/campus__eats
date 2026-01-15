@@ -129,4 +129,114 @@ public class UpdateProductTests
         updatedProduct.Category.Should().Be("Drink");
         updatedProduct.IsAvailable.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task Validator_Rejects_Empty_Name()
+    {
+        // Arrange
+        var validator = new UpdateProduct.Validator();
+        var command = new UpdateProduct.Command
+        {
+            Id = Guid.NewGuid(),
+            Name = "",
+            Description = "Test",
+            Price = 10.00m,
+            Category = "Main"
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Name");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Zero_Price()
+    {
+        // Arrange
+        var validator = new UpdateProduct.Validator();
+        var command = new UpdateProduct.Command
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test",
+            Description = "Test",
+            Price = 0,
+            Category = "Main"
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Price");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Invalid_Category()
+    {
+        // Arrange
+        var validator = new UpdateProduct.Validator();
+        var command = new UpdateProduct.Command
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test",
+            Description = "Test",
+            Price = 10.00m,
+            Category = "InvalidCategory"
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Category");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Too_Long_Description()
+    {
+        // Arrange
+        var validator = new UpdateProduct.Validator();
+        var command = new UpdateProduct.Command
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test",
+            Description = new string('a', 501), // 501 characters
+            Price = 10.00m,
+            Category = "Main"
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Description");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Price_Over_1000()
+    {
+        // Arrange
+        var validator = new UpdateProduct.Validator();
+        var command = new UpdateProduct.Command
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test",
+            Description = "Test",
+            Price = 1001,
+            Category = "Main"
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Price");
+    }
 }

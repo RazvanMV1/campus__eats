@@ -87,5 +87,119 @@ namespace CampusEats.Tests.Features.Loyalty
             Assert.False(result.IsSuccess);
             Assert.Contains("not found", result.Errors[0], StringComparison.OrdinalIgnoreCase);
         }
+
+        [Fact]
+        public async Task Handler_Returns_Empty_List_When_No_Transactions()
+        {
+            // Arrange
+            var dbName = Guid.NewGuid().ToString();
+            await using var context = CreateContext(dbName);
+
+            var userId = Guid.NewGuid();
+            context.Users.Add(new CampusEats.Backend.Domain.User
+            {
+                Id = userId,
+                Email = "u@test",
+                CreatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync();
+
+            var handler = new GetLoyaltyTransactions.Handler(context);
+
+            // Act
+            var result = await handler.Handle(new GetLoyaltyTransactions.Query(userId, 1, 10), CancellationToken.None);
+
+            // Assert
+            Assert.True(result.IsSuccess);
+            Assert.Empty(result.Value);
+        }
+
+        [Fact]
+        public async Task Handler_Returns_Single_Transaction()
+        {
+            // Arrange
+            var dbName = Guid.NewGuid().ToString();
+            await using var context = CreateContext(dbName);
+
+            var userId = Guid.NewGuid();
+            context.Users.Add(new CampusEats.Backend.Domain.User
+            {
+                Id = userId,
+                Email = "u@test",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            context.LoyaltyTransactions.Add(new LoyaltyTransaction
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                PointsChange = 50,
+                Type = LoyaltyTransactionType.Earned,
+                Description = "Welcome bonus",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await context.SaveChangesAsync();
+
+            var handler = new GetLoyaltyTransactions.Handler(context);
+
+            // Act
+            var result = await handler.Handle(new GetLoyaltyTransactions.Query(userId, 1, 10), CancellationToken.None);
+
+            // Assert
+            Assert.True(result.IsSuccess);
+            Assert.Single(result.Value);
+            Assert.Equal(50, result.Value.First().PointsChange);
+            Assert.Equal("Welcome bonus", result.Value.First().Description);
+        }
+
+        [Fact]
+        public async Task Handler_Returns_Both_Earned_And_Redeemed_Transactions()
+        {
+            // Arrange
+            var dbName = Guid.NewGuid().ToString();
+            await using var context = CreateContext(dbName);
+
+            var userId = Guid.NewGuid();
+            context.Users.Add(new CampusEats.Backend.Domain.User
+            {
+                Id = userId,
+                Email = "u@test",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            context.LoyaltyTransactions.Add(new LoyaltyTransaction
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                PointsChange = 100,
+                Type = LoyaltyTransactionType.Earned,
+                Description = "Order completed",
+                CreatedAt = DateTime.UtcNow.AddHours(-2)
+            });
+
+            context.LoyaltyTransactions.Add(new LoyaltyTransaction
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                PointsChange = -50,
+                Type = LoyaltyTransactionType.Redeemed,
+                Description = "Points used",
+                CreatedAt = DateTime.UtcNow.AddHours(-1)
+            });
+
+            await context.SaveChangesAsync();
+
+            var handler = new GetLoyaltyTransactions.Handler(context);
+
+            // Act
+            var result = await handler.Handle(new GetLoyaltyTransactions.Query(userId, 1, 10), CancellationToken.None);
+
+            // Assert
+            Assert.True(result.IsSuccess);
+            Assert.Equal(2, result.Value.Count);
+            Assert.Contains(result.Value, t => t.PointsChange == 100);
+            Assert.Contains(result.Value, t => t.PointsChange == -50);
+        }
     }
 }

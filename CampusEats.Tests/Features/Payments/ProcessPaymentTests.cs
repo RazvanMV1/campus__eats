@@ -163,4 +163,107 @@ public class ProcessPaymentTests
         // result.Value!.StripePaymentIntentId.Should().Be("pi_test_1");
         // result.Value!.StripeClientSecret.Should().Be("test_client_secret");
     }
+
+    [Fact]
+    public async Task Handle_OrderNotFound_ReturnsFailure()
+    {
+        // Arrange
+        var context = TestDbContextFactory.CreateInMemoryContext();
+        var stripeClient = new StripeClient("sk_test_dummy");
+        var handler = new ProcessPayment.Handler(context, stripeClient);
+
+        var command = new ProcessPayment.Command 
+        { 
+            OrderId = Guid.NewGuid(), // Non-existent order
+            PaymentMethod = "Cash", 
+            Amount = 100 
+        };
+
+        // Act
+        var result = await handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.Contains("Order") && e.Contains("not found"));
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Empty_OrderId()
+    {
+        // Arrange
+        var validator = new ProcessPayment.Validator();
+        var command = new ProcessPayment.Command
+        {
+            OrderId = Guid.Empty,
+            PaymentMethod = "Cash",
+            Amount = 100
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "OrderId");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Negative_Amount()
+    {
+        // Arrange
+        var validator = new ProcessPayment.Validator();
+        var command = new ProcessPayment.Command
+        {
+            OrderId = Guid.NewGuid(),
+            PaymentMethod = "Cash",
+            Amount = -50
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Amount");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Invalid_PaymentMethod()
+    {
+        // Arrange
+        var validator = new ProcessPayment.Validator();
+        var command = new ProcessPayment.Command
+        {
+            OrderId = Guid.NewGuid(),
+            PaymentMethod = "Bitcoin", // Invalid
+            Amount = 100
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "PaymentMethod");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Zero_Amount()
+    {
+        // Arrange
+        var validator = new ProcessPayment.Validator();
+        var command = new ProcessPayment.Command
+        {
+            OrderId = Guid.NewGuid(),
+            PaymentMethod = "Cash",
+            Amount = 0
+        };
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Amount");
+    }
 }

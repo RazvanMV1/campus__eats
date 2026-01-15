@@ -167,4 +167,42 @@ public class LoginTests
         result.IsSuccess.Should().BeFalse();
         result.Errors.Should().Contain(e => e.Contains("Account is deactivated"));
     }
+
+    [Fact]
+    public async Task Validator_Rejects_Empty_Email()
+    {
+        // Arrange
+        var validator = new Login.Validator();
+        var query = new Login.Query
+        {
+            Email = "",
+            Password = "TestPass123!"
+        };
+
+        // Act
+        var result = validator.Validate(query);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Email");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Invalid_Email_Format()
+    {
+        // Arrange
+        var validator = new Login.Validator();
+        var query = new Login.Query
+        {
+            Email = "not-an-email",
+            Password = "TestPass123!"
+        };
+
+        // Act
+        var result = validator.Validate(query);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Email" && e.ErrorMessage.Contains("Invalid email format"));
+    }
 }

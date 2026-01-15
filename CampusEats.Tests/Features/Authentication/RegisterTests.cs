@@ -167,4 +167,48 @@ public class RegisterTests
         validationResult.Errors.Should().Contain(e => e.PropertyName == "FullName");
         validationResult.Errors.Should().Contain(e => e.PropertyName == "PhoneNumber");
     }
+
+    [Fact]
+    public async Task Validator_Rejects_Too_Long_Password()
+    {
+        // Arrange
+        var validator = new Register.Validator();
+
+        var command = new Register.Command
+        {
+            Email = "test@campus.ro",
+            Password = new string('A', 101) + "1!", // Too long (>100 chars)
+            FullName = "Test User",
+            PhoneNumber = "+40712345678"
+        };
+
+        // Act
+        var validationResult = await validator.ValidateAsync(command);
+
+        // Assert
+        validationResult.IsValid.Should().BeFalse();
+        validationResult.Errors.Should().Contain(e => e.PropertyName == "Password");
+    }
+
+    [Fact]
+    public async Task Validator_Rejects_Too_Long_FullName()
+    {
+        // Arrange
+        var validator = new Register.Validator();
+
+        var command = new Register.Command
+        {
+            Email = "test@campus.ro",
+            Password = "SecurePass123!",
+            FullName = new string('A', 201), // Too long (>200 chars)
+            PhoneNumber = "+40712345678"
+        };
+
+        // Act
+        var validationResult = await validator.ValidateAsync(command);
+
+        // Assert
+        validationResult.IsValid.Should().BeFalse();
+        validationResult.Errors.Should().Contain(e => e.PropertyName == "FullName");
+    }
 }

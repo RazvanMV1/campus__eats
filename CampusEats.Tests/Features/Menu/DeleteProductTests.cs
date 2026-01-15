@@ -166,4 +166,51 @@ public class DeleteProductTests
         var productStillExists = await context.Products.FindAsync(productId);
         productStillExists.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task Validator_Rejects_Empty_Id()
+    {
+        // Arrange
+        var validator = new DeleteProduct.Validator();
+        var command = new DeleteProduct.Command(Guid.Empty);
+
+        // Act
+        var result = validator.Validate(command);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.PropertyName == "Id");
+    }
+
+    [Fact]
+    public async Task Handle_MultipleProducts_DeletesOnlySpecified()
+    {
+        // Arrange
+        var context = TestDbContextFactory.CreateInMemoryContext();
+        var productToDelete = Guid.NewGuid();
+        var productToKeep = Guid.NewGuid();
+
+        var products = new[]
+        {
+            new Product { Id = productToDelete, Name = "Delete Me", Description = "Test", Price = 10m, Category = "Main", IsAvailable = true, CreatedAt = DateTime.UtcNow },
+            new Product { Id = productToKeep, Name = "Keep Me", Description = "Test", Price = 15m, Category = "Main", IsAvailable = true, CreatedAt = DateTime.UtcNow }
+        };
+
+        context.Products.AddRange(products);
+        await context.SaveChangesAsync();
+
+        var handler = new DeleteProduct.Handler(context);
+        var command = new DeleteProduct.Command(productToDelete);
+
+        // Act
+        await handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        var deletedProduct = await context.Products.FindAsync(productToDelete);
+        var keptProduct = await context.Products.FindAsync(productToKeep);
+        
+        deletedProduct.Should().BeNull();
+        keptProduct.Should().NotBeNull();
+        keptProduct!.Name.Should().Be("Keep Me");
+    }
 }

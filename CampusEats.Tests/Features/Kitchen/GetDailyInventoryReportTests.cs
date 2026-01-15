@@ -1,101 +1,413 @@
+using CampusEats.Backend.Features.Kitchen;
 using CampusEats.Backend.Persistence;
 using CampusEats.Backend.Domain;
-using CampusEats.Backend.Common;
-using MediatR;
+using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Xunit;
 
-namespace CampusEats.Backend.Features.Kitchen;
+namespace CampusEats.Backend.Tests.Features.Kitchen;
 
-public static class GetDailyInventoryReport
+public class GetDailyInventoryReportTests
 {
-    public record Query : IRequest<Result<DailyInventoryReportDto>>
+    private static AppDbContext CreateInMemoryContext()
     {
-        public DateTime? ReportDate { get; init; }
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        return new AppDbContext(options);
     }
 
-    public class DailyInventoryReportDto
+    [Fact]
+    public async Task Handle_Should_Return_Report_With_Completed_Orders()
     {
-        public DateTime ReportDate { get; set; }
-        public decimal TotalRevenue { get; set; }
-        public int TotalOrdersProcessed { get; set; }
-        public int TotalItemsSold { get; set; }
-        public List<InventoryItemDto> InventoryItems { get; set; } = new();
-    }
-
-    public class InventoryItemDto
-    {
-        public Guid ProductId { get; set; }
-        public string ProductName { get; set; } = string.Empty;
-        public int QuantitySold { get; set; }
-        public decimal Revenue { get; set; }
-        public int OrderCount { get; set; }
-    }
-
-    internal sealed class Handler : IRequestHandler<Query, Result<DailyInventoryReportDto>>
-    {
-        private readonly AppDbContext _context;
-
-        public Handler(AppDbContext context)
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var user = new User
         {
-            _context = context;
-        }
+            Id = Guid.NewGuid(),
+            Email = "test@campus.ro",
+            FullName = "Test User",
+            Role = "Student",
+            PasswordHash = "hash",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
 
-        public async Task<Result<DailyInventoryReportDto>> Handle(Query request, CancellationToken cancellationToken)
+        var product1 = new Product
         {
-            var reportDate = (request.ReportDate ?? DateTime.UtcNow).Date;
+            Id = Guid.NewGuid(),
+            Name = "Burger",
+            Price = 25.00m,
+            Category = "Main",
+            IsAvailable = true,
+            CreatedAt = DateTime.UtcNow
+        };
 
-            // Load today's completed orders (Completed status and CompletedAt date matches reportDate)
-            var orders = await _context.Orders
-                .Where(o => o.Status == "Completed" && o.CompletedAt.HasValue && o.CompletedAt.Value.Date == reportDate)
-                .ToListAsync(cancellationToken);
+        var product2 = new Product
+        {
+            Id = Guid.NewGuid(),
+            Name = "Pizza",
+            Price = 30.00m,
+            Category = "Main",
+            IsAvailable = true,
+            CreatedAt = DateTime.UtcNow
+        };
 
-            // If no orders, still return a report with zeros and include all products (so tests expecting pizza with zeros pass)
-            var orderIds = orders.Select(o => o.Id).ToHashSet();
+        var reportDate = DateTime.UtcNow.Date;
+        
+        var completedOrder = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-001",
+            UserId = user.Id,
+            Status = "Completed",
+            PaymentStatus = "Paid",
+            TotalAmount = 55.00m,
+            CreatedAt = reportDate.AddHours(10),
+            CompletedAt = reportDate.AddHours(11)
+        };
 
-            // Load relevant order items (only those that belong to today's completed orders)
-            var orderItems = await _context.OrderItems
-                .Where(oi => orderIds.Contains(oi.OrderId))
-                .ToListAsync(cancellationToken);
+        var orderItem1 = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = completedOrder.Id,
+            ProductId = product1.Id,
+            Quantity = 2,
+            UnitPrice = 25.00m,
+            Subtotal = 50.00m
+        };
 
-            // Load all products to include even those with zero sales
-            var products = await _context.Products
-                .OrderBy(p => p.Name)
-                .ToListAsync(cancellationToken);
+        var orderItem2 = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = completedOrder.Id,
+            ProductId = product2.Id,
+            Quantity = 1,
+            UnitPrice = 30.00m,
+            Subtotal = 30.00m
+        };
 
-            var report = new DailyInventoryReportDto
-            {
-                ReportDate = reportDate,
-                TotalRevenue = orders.Sum(o => o.TotalAmount),
-                TotalOrdersProcessed = orders.Count,
-                TotalItemsSold = orderItems.Sum(oi => oi.Quantity)
-            };
+        await context.Users.AddAsync(user);
+        await context.Products.AddRangeAsync(product1, product2);
+        await context.Orders.AddAsync(completedOrder);
+        await context.OrderItems.AddRangeAsync(orderItem1, orderItem2);
+        await context.SaveChangesAsync();
 
-            var inventory = new List<InventoryItemDto>();
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = reportDate };
 
-            foreach (var product in products)
-            {
-                var itemsForProduct = orderItems.Where(oi => oi.ProductId == product.Id).ToList();
-                var quantitySold = itemsForProduct.Sum(i => i.Quantity);
-                var revenue = itemsForProduct.Sum(i => i.Subtotal);
-                var orderCount = itemsForProduct.Select(i => i.OrderId).Distinct().Count();
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
 
-                inventory.Add(new InventoryItemDto
-                {
-                    ProductId = product.Id,
-                    ProductName = product.Name,
-                    QuantitySold = quantitySold,
-                    Revenue = revenue,
-                    OrderCount = orderCount
-                });
-            }
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().NotBeNull();
+        result.Value!.ReportDate.Should().Be(reportDate);
+        result.Value.TotalRevenue.Should().Be(55.00m);
+        result.Value.TotalOrdersProcessed.Should().Be(1);
+        result.Value.TotalItemsSold.Should().Be(3);
+        result.Value.InventoryItems.Should().HaveCount(2);
+        result.Value.InventoryItems.First().ProductName.Should().Be("Burger");
+        result.Value.InventoryItems.First().QuantitySold.Should().Be(2);
+    }
 
-            // order by quantity sold desc so the most sold product is first (test expects Burger first)
-            report.InventoryItems = inventory
-                .OrderByDescending(i => i.QuantitySold)
-                .ThenBy(i => i.ProductName)
-                .ToList();
+    [Fact]
+    public async Task Handle_Should_Return_Empty_Report_When_No_Completed_Orders()
+    {
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var reportDate = DateTime.UtcNow.Date;
+        
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = reportDate };
 
-            return Result<DailyInventoryReportDto>.Success(report);
-        }
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().NotBeNull();
+        result.Value!.TotalRevenue.Should().Be(0);
+        result.Value.TotalOrdersProcessed.Should().Be(0);
+        result.Value.TotalItemsSold.Should().Be(0);
+        result.Value.InventoryItems.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Handle_Should_Only_Include_Orders_From_Specified_Date()
+    {
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "test@campus.ro",
+            FullName = "Test User",
+            Role = "Student",
+            PasswordHash = "hash",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            Name = "Burger",
+            Price = 25.00m,
+            Category = "Main",
+            IsAvailable = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var reportDate = DateTime.UtcNow.Date;
+        var yesterdayDate = reportDate.AddDays(-1);
+        
+        // Order completed today
+        var todayOrder = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-TODAY",
+            UserId = user.Id,
+            Status = "Completed",
+            PaymentStatus = "Paid",
+            TotalAmount = 25.00m,
+            CreatedAt = reportDate.AddHours(10),
+            CompletedAt = reportDate.AddHours(11)
+        };
+
+        // Order completed yesterday
+        var yesterdayOrder = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-YESTERDAY",
+            UserId = user.Id,
+            Status = "Completed",
+            PaymentStatus = "Paid",
+            TotalAmount = 25.00m,
+            CreatedAt = yesterdayDate.AddHours(10),
+            CompletedAt = yesterdayDate.AddHours(11)
+        };
+
+        var todayOrderItem = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = todayOrder.Id,
+            ProductId = product.Id,
+            Quantity = 1,
+            UnitPrice = 25.00m,
+            Subtotal = 25.00m
+        };
+
+        var yesterdayOrderItem = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = yesterdayOrder.Id,
+            ProductId = product.Id,
+            Quantity = 1,
+            UnitPrice = 25.00m,
+            Subtotal = 25.00m
+        };
+
+        await context.Users.AddAsync(user);
+        await context.Products.AddAsync(product);
+        await context.Orders.AddRangeAsync(todayOrder, yesterdayOrder);
+        await context.OrderItems.AddRangeAsync(todayOrderItem, yesterdayOrderItem);
+        await context.SaveChangesAsync();
+
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = reportDate };
+
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.TotalOrdersProcessed.Should().Be(1);
+        result.Value.TotalRevenue.Should().Be(25.00m);
+        result.Value.TotalItemsSold.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_Should_Exclude_Pending_Orders()
+    {
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "test@campus.ro",
+            FullName = "Test User",
+            Role = "Student",
+            PasswordHash = "hash",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            Name = "Burger",
+            Price = 25.00m,
+            Category = "Main",
+            IsAvailable = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var reportDate = DateTime.UtcNow.Date;
+        
+        var pendingOrder = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-PENDING",
+            UserId = user.Id,
+            Status = "Pending",
+            PaymentStatus = "Paid",
+            TotalAmount = 25.00m,
+            CreatedAt = reportDate.AddHours(10)
+        };
+
+        var orderItem = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = pendingOrder.Id,
+            ProductId = product.Id,
+            Quantity = 1,
+            UnitPrice = 25.00m,
+            Subtotal = 25.00m
+        };
+
+        await context.Users.AddAsync(user);
+        await context.Products.AddAsync(product);
+        await context.Orders.AddAsync(pendingOrder);
+        await context.OrderItems.AddAsync(orderItem);
+        await context.SaveChangesAsync();
+
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = reportDate };
+
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.TotalOrdersProcessed.Should().Be(0);
+        result.Value.TotalRevenue.Should().Be(0);
+        result.Value.InventoryItems.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Handle_Should_Use_Current_Date_When_ReportDate_Is_Null()
+    {
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = null };
+
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ReportDate.Should().Be(DateTime.UtcNow.Date);
+    }
+
+    [Fact]
+    public async Task Handle_Should_Aggregate_Multiple_Orders_For_Same_Product()
+    {
+        // Arrange
+        using var context = CreateInMemoryContext();
+        
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = "test@campus.ro",
+            FullName = "Test User",
+            Role = "Student",
+            PasswordHash = "hash",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            Name = "Burger",
+            Price = 25.00m,
+            Category = "Main",
+            IsAvailable = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var reportDate = DateTime.UtcNow.Date;
+        
+        var order1 = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-001",
+            UserId = user.Id,
+            Status = "Completed",
+            PaymentStatus = "Paid",
+            TotalAmount = 50.00m,
+            CreatedAt = reportDate.AddHours(10),
+            CompletedAt = reportDate.AddHours(11)
+        };
+
+        var order2 = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = "ORD-002",
+            UserId = user.Id,
+            Status = "Completed",
+            PaymentStatus = "Paid",
+            TotalAmount = 25.00m,
+            CreatedAt = reportDate.AddHours(14),
+            CompletedAt = reportDate.AddHours(15)
+        };
+
+        var orderItem1 = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order1.Id,
+            ProductId = product.Id,
+            Quantity = 2,
+            UnitPrice = 25.00m,
+            Subtotal = 50.00m
+        };
+
+        var orderItem2 = new OrderItem
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order2.Id,
+            ProductId = product.Id,
+            Quantity = 1,
+            UnitPrice = 25.00m,
+            Subtotal = 25.00m
+        };
+
+        await context.Users.AddAsync(user);
+        await context.Products.AddAsync(product);
+        await context.Orders.AddRangeAsync(order1, order2);
+        await context.OrderItems.AddRangeAsync(orderItem1, orderItem2);
+        await context.SaveChangesAsync();
+
+        var handler = new GetDailyInventoryReport.Handler(context);
+        var query = new GetDailyInventoryReport.Query { ReportDate = reportDate };
+
+        // Act
+        var result = await handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.TotalOrdersProcessed.Should().Be(2);
+        result.Value.TotalRevenue.Should().Be(75.00m);
+        result.Value.TotalItemsSold.Should().Be(3);
+        result.Value.InventoryItems.Should().HaveCount(1);
+        result.Value.InventoryItems.First().QuantitySold.Should().Be(3);
+        result.Value.InventoryItems.First().Revenue.Should().Be(75.00m);
     }
 }
